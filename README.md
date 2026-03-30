@@ -8,7 +8,7 @@ This repository contains a single, commented Python script used to reproduce the
   - loads `telecom_churn_sentiment.csv`
   - generates sentiment distribution tables/charts
   - generates negative-sentiment breakdowns by `Gender` and `TechSupport`
-  - runs a text-only churn prediction baseline (5-fold CV)
+  - compares multiple text-driven churn models (5-fold CV where applicable)
   - writes output artifacts under `tables/` and `figures/`
 
 ## How to run
@@ -26,10 +26,12 @@ python3 analysis.py
 - `tables/negative_by_gender.csv`
 - `tables/negative_by_techsupport.csv`
 - `tables/model_test_score.csv`
+- `tables/model_comparison.csv`
 - `figures/sentiment_distribution.svg`
 - `figures/negative_by_gender.svg`
 - `figures/negative_by_techsupport.svg`
 - `figures/confusion_matrix.svg`
+- `figures/model_metric_comparison.svg`
 
 ## Notes
 

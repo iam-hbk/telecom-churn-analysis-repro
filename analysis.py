@@ -405,6 +405,14 @@ def preprocess_text(text: str | None) -> list[str]:
     return filtered
 
 
+def tokens_with_bigrams(tokens: list[str]) -> list[str]:
+    """Append adjacent token bigrams to unigram token list."""
+    if len(tokens) < 2:
+        return tokens[:]
+    bigrams = [f"{tokens[i]}__{tokens[i + 1]}" for i in range(len(tokens) - 1)]
+    return tokens + bigrams
+
+
 def build_stratified_folds(
     rows: list[dict[str, str]],
     label_col: str,
@@ -523,6 +531,127 @@ def compute_binary_metrics(
     }
 
 
+def evaluate_nb_cv(
+    rows: list[dict[str, str]],
+    n_folds: int = 5,
+    use_bigrams: bool = False,
+) -> dict[str, float]:
+    """Evaluate Multinomial NB using stratified cross-validation."""
+    folds = build_stratified_folds(rows, label_col="Churn", n_folds=n_folds, seed=42)
+    y_true_all: list[str] = []
+    y_pred_all: list[str] = []
+
+    for fold_idx in range(n_folds):
+        test_rows = folds[fold_idx]
+        train_rows: list[dict[str, str]] = []
+        for idx, fold_rows in enumerate(folds):
+            if idx != fold_idx:
+                train_rows.extend(fold_rows)
+
+        x_train = []
+        for r in train_rows:
+            tokens = preprocess_text(r.get("ReviewText"))
+            x_train.append(tokens_with_bigrams(tokens) if use_bigrams else tokens)
+        y_train = [clean_value(r.get("Churn")) for r in train_rows]
+
+        x_test = []
+        for r in test_rows:
+            tokens = preprocess_text(r.get("ReviewText"))
+            x_test.append(tokens_with_bigrams(tokens) if use_bigrams else tokens)
+        y_test = [clean_value(r.get("Churn")) for r in test_rows]
+
+        model = MultinomialNBText()
+        model.fit(x_train, y_train)
+        y_pred = [model.predict_one(tokens) for tokens in x_test]
+
+        y_true_all.extend(y_test)
+        y_pred_all.extend(y_pred)
+
+    return compute_binary_metrics(y_true_all, y_pred_all, positive_label="Yes")
+
+
+def evaluate_sentiment_rule(rows: list[dict[str, str]]) -> dict[str, float]:
+    """Rule baseline: predict churn if sentiment is negative."""
+    y_true = [clean_value(r.get("Churn")) for r in rows]
+    y_pred = [
+        "Yes" if clean_value(r.get("Sentiment")).lower() == "negative" else "No"
+        for r in rows
+    ]
+    return compute_binary_metrics(y_true, y_pred, positive_label="Yes")
+
+
+def save_grouped_metric_chart_svg(path: Path, model_rows: list[dict[str, str]]) -> None:
+    """Create grouped-bar SVG for precision, recall, and F1 by model."""
+    width, height = 1080, 640
+    left, right, top, bottom = 100, 40, 100, 130
+    chart_w = width - left - right
+    chart_h = height - top - bottom
+
+    metrics = ["precision", "recall", "f1_score"]
+    metric_labels = {"precision": "Precision", "recall": "Recall", "f1_score": "F1"}
+    colors = ["#1E88E5", "#43A047", "#EF6C00"]
+
+    n_models = len(model_rows)
+    group_w = chart_w / max(n_models, 1)
+    inner_w = group_w * 0.7
+    bar_w = inner_w / len(metrics)
+
+    lines = [
+        "<?xml version='1.0' encoding='UTF-8'?>",
+        f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' viewBox='0 0 {width} {height}'>",
+        "<rect width='100%' height='100%' fill='white' />",
+        "<text x='540' y='44' text-anchor='middle' font-size='24' font-family='Arial' fill='#222'>Churn Model Comparison (Text-based)</text>",
+        "<text x='540' y='74' text-anchor='middle' font-size='14' font-family='Arial' fill='#555'>5-fold stratified CV (except deterministic rule baseline)</text>",
+        f"<line x1='{left}' y1='{top + chart_h}' x2='{left + chart_w}' y2='{top + chart_h}' stroke='#444' stroke-width='2' />",
+        f"<line x1='{left}' y1='{top}' x2='{left}' y2='{top + chart_h}' stroke='#444' stroke-width='2' />",
+    ]
+
+    for i in range(6):
+        v = i / 5
+        y = top + chart_h - chart_h * v
+        lines.append(
+            f"<line x1='{left - 6}' y1='{y:.1f}' x2='{left}' y2='{y:.1f}' stroke='#444' stroke-width='1' />"
+        )
+        lines.append(
+            f"<text x='{left - 12}' y='{y + 4:.1f}' text-anchor='end' font-size='12' font-family='Arial' fill='#333'>{v:.1f}</text>"
+        )
+        lines.append(
+            f"<line x1='{left}' y1='{y:.1f}' x2='{left + chart_w}' y2='{y:.1f}' stroke='#E6E6E6' stroke-width='1' />"
+        )
+
+    for m_idx, row in enumerate(model_rows):
+        gx = left + m_idx * group_w + (group_w - inner_w) / 2
+        for j, metric in enumerate(metrics):
+            v = float(row[metric])
+            bar_h = chart_h * v
+            x = gx + j * bar_w
+            y = top + chart_h - bar_h
+            lines.append(
+                f"<rect x='{x:.1f}' y='{y:.1f}' width='{bar_w - 3:.1f}' height='{bar_h:.1f}' fill='{colors[j]}' />"
+            )
+            lines.append(
+                f"<text x='{x + (bar_w - 3) / 2:.1f}' y='{y - 6:.1f}' text-anchor='middle' font-size='11' font-family='Arial' fill='#111'>{v:.3f}</text>"
+            )
+
+        lines.append(
+            f"<text x='{left + (m_idx + 0.5) * group_w:.1f}' y='{top + chart_h + 24}' text-anchor='middle' font-size='12' font-family='Arial' fill='#222'>{escape(row['model'])}</text>"
+        )
+
+    legend_x = width - 300
+    legend_y = 90
+    for j, metric in enumerate(metrics):
+        ly = legend_y + j * 24
+        lines.append(
+            f"<rect x='{legend_x}' y='{ly - 10}' width='14' height='14' fill='{colors[j]}' />"
+        )
+        lines.append(
+            f"<text x='{legend_x + 22}' y='{ly + 1}' font-size='12' font-family='Arial' fill='#222'>{metric_labels[metric]}</text>"
+        )
+
+    lines.append("</svg>")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def save_confusion_matrix_svg(path: Path, tp: int, tn: int, fp: int, fn: int) -> None:
     """Create a simple 2x2 confusion matrix chart as SVG."""
     w, h = 760, 540
@@ -560,63 +689,103 @@ def save_confusion_matrix_svg(path: Path, tp: int, tn: int, fp: int, fn: int) ->
 
 
 def run_text_churn_model(rows: list[dict[str, str]], n_folds: int = 5) -> None:
-    """Run cross-validated churn prediction from review text."""
-    folds = build_stratified_folds(rows, label_col="Churn", n_folds=n_folds, seed=42)
+    """Run and compare multiple churn models from text signals."""
+    nb_uni = evaluate_nb_cv(rows, n_folds=n_folds, use_bigrams=False)
+    nb_uni_bi = evaluate_nb_cv(rows, n_folds=n_folds, use_bigrams=True)
+    sentiment_rule = evaluate_sentiment_rule(rows)
 
-    y_true_all: list[str] = []
-    y_pred_all: list[str] = []
-
-    for fold_idx in range(n_folds):
-        test_rows = folds[fold_idx]
-        train_rows: list[dict[str, str]] = []
-        for idx, fold_rows in enumerate(folds):
-            if idx != fold_idx:
-                train_rows.extend(fold_rows)
-
-        x_train = [preprocess_text(r.get("ReviewText")) for r in train_rows]
-        y_train = [clean_value(r.get("Churn")) for r in train_rows]
-        x_test = [preprocess_text(r.get("ReviewText")) for r in test_rows]
-        y_test = [clean_value(r.get("Churn")) for r in test_rows]
-
-        model = MultinomialNBText()
-        model.fit(x_train, y_train)
-        y_pred = [model.predict_one(tokens) for tokens in x_test]
-
-        y_true_all.extend(y_test)
-        y_pred_all.extend(y_pred)
-
-    metrics = compute_binary_metrics(y_true_all, y_pred_all, positive_label="Yes")
-
-    model_table = [
-        {"metric": "accuracy", "value": f"{metrics['accuracy']:.4f}"},
-        {"metric": "precision", "value": f"{metrics['precision']:.4f}"},
-        {"metric": "recall", "value": f"{metrics['recall']:.4f}"},
-        {"metric": "f1_score", "value": f"{metrics['f1']:.4f}"},
-        {"metric": "tp", "value": str(int(metrics["tp"]))},
-        {"metric": "fp", "value": str(int(metrics["fp"]))},
-        {"metric": "fn", "value": str(int(metrics["fn"]))},
-        {"metric": "tn", "value": str(int(metrics["tn"]))},
+    comparison_rows = [
+        {
+            "model": "NB_unigram",
+            "accuracy": f"{nb_uni['accuracy']:.4f}",
+            "precision": f"{nb_uni['precision']:.4f}",
+            "recall": f"{nb_uni['recall']:.4f}",
+            "f1_score": f"{nb_uni['f1']:.4f}",
+            "tp": str(int(nb_uni["tp"])),
+            "fp": str(int(nb_uni["fp"])),
+            "fn": str(int(nb_uni["fn"])),
+            "tn": str(int(nb_uni["tn"])),
+        },
+        {
+            "model": "NB_unigram_bigram",
+            "accuracy": f"{nb_uni_bi['accuracy']:.4f}",
+            "precision": f"{nb_uni_bi['precision']:.4f}",
+            "recall": f"{nb_uni_bi['recall']:.4f}",
+            "f1_score": f"{nb_uni_bi['f1']:.4f}",
+            "tp": str(int(nb_uni_bi["tp"])),
+            "fp": str(int(nb_uni_bi["fp"])),
+            "fn": str(int(nb_uni_bi["fn"])),
+            "tn": str(int(nb_uni_bi["tn"])),
+        },
+        {
+            "model": "Sentiment_rule",
+            "accuracy": f"{sentiment_rule['accuracy']:.4f}",
+            "precision": f"{sentiment_rule['precision']:.4f}",
+            "recall": f"{sentiment_rule['recall']:.4f}",
+            "f1_score": f"{sentiment_rule['f1']:.4f}",
+            "tp": str(int(sentiment_rule["tp"])),
+            "fp": str(int(sentiment_rule["fp"])),
+            "fn": str(int(sentiment_rule["fn"])),
+            "tn": str(int(sentiment_rule["tn"])),
+        },
     ]
 
+    write_csv(
+        TABLES_DIR / "model_comparison.csv",
+        comparison_rows,
+        [
+            "model",
+            "accuracy",
+            "precision",
+            "recall",
+            "f1_score",
+            "tp",
+            "fp",
+            "fn",
+            "tn",
+        ],
+    )
+
+    best = max(comparison_rows, key=lambda r: float(r["f1_score"]))
+    model_table = [
+        {"metric": "model", "value": best["model"]},
+        {"metric": "accuracy", "value": best["accuracy"]},
+        {"metric": "precision", "value": best["precision"]},
+        {"metric": "recall", "value": best["recall"]},
+        {"metric": "f1_score", "value": best["f1_score"]},
+        {"metric": "tp", "value": best["tp"]},
+        {"metric": "fp", "value": best["fp"]},
+        {"metric": "fn", "value": best["fn"]},
+        {"metric": "tn", "value": best["tn"]},
+    ]
     write_csv(TABLES_DIR / "model_test_score.csv", model_table, ["metric", "value"])
+
+    save_grouped_metric_chart_svg(
+        FIGURES_DIR / "model_metric_comparison.svg", comparison_rows
+    )
     save_confusion_matrix_svg(
         FIGURES_DIR / "confusion_matrix.svg",
-        tp=int(metrics["tp"]),
-        tn=int(metrics["tn"]),
-        fp=int(metrics["fp"]),
-        fn=int(metrics["fn"]),
+        tp=int(best["tp"]),
+        tn=int(best["tn"]),
+        fp=int(best["fp"]),
+        fn=int(best["fn"]),
     )
 
     print("\nModel evaluation outputs:")
+    print(f"- {TABLES_DIR / 'model_comparison.csv'}")
     print(f"- {TABLES_DIR / 'model_test_score.csv'}")
+    print(f"- {FIGURES_DIR / 'model_metric_comparison.svg'}")
     print(f"- {FIGURES_DIR / 'confusion_matrix.svg'}")
-    print(
-        "Metrics: "
-        f"accuracy={metrics['accuracy']:.4f}, "
-        f"precision={metrics['precision']:.4f}, "
-        f"recall={metrics['recall']:.4f}, "
-        f"f1={metrics['f1']:.4f}"
-    )
+    print("\nModel comparison summary:")
+    for row in comparison_rows:
+        print(
+            f"{row['model']}: "
+            f"acc={row['accuracy']} "
+            f"prec={row['precision']} "
+            f"rec={row['recall']} "
+            f"f1={row['f1_score']}"
+        )
+    print(f"Best model by F1: {best['model']}")
 
 
 def main() -> None:
