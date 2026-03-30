@@ -652,6 +652,144 @@ def save_grouped_metric_chart_svg(path: Path, model_rows: list[dict[str, str]]) 
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def save_accuracy_f1_chart_svg(path: Path, model_rows: list[dict[str, str]]) -> None:
+    """Create paired bars for accuracy and F1 by model."""
+    width, height = 960, 620
+    left, right, top, bottom = 100, 40, 90, 120
+    chart_w = width - left - right
+    chart_h = height - top - bottom
+
+    n_models = len(model_rows)
+    group_w = chart_w / max(n_models, 1)
+    bar_w = min(62, group_w * 0.28)
+    colors = {"accuracy": "#3949AB", "f1_score": "#F4511E"}
+
+    lines = [
+        "<?xml version='1.0' encoding='UTF-8'?>",
+        f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' viewBox='0 0 {width} {height}'>",
+        "<rect width='100%' height='100%' fill='white' />",
+        "<text x='480' y='42' text-anchor='middle' font-size='24' font-family='Arial' fill='#222'>Accuracy vs F1 by Model</text>",
+        f"<line x1='{left}' y1='{top + chart_h}' x2='{left + chart_w}' y2='{top + chart_h}' stroke='#444' stroke-width='2' />",
+        f"<line x1='{left}' y1='{top}' x2='{left}' y2='{top + chart_h}' stroke='#444' stroke-width='2' />",
+    ]
+
+    for i in range(6):
+        v = i / 5
+        y = top + chart_h - chart_h * v
+        lines.append(
+            f"<line x1='{left - 6}' y1='{y:.1f}' x2='{left}' y2='{y:.1f}' stroke='#444' stroke-width='1' />"
+        )
+        lines.append(
+            f"<text x='{left - 12}' y='{y + 4:.1f}' text-anchor='end' font-size='12' font-family='Arial' fill='#333'>{v:.1f}</text>"
+        )
+        lines.append(
+            f"<line x1='{left}' y1='{y:.1f}' x2='{left + chart_w}' y2='{y:.1f}' stroke='#E6E6E6' stroke-width='1' />"
+        )
+
+    for idx, row in enumerate(model_rows):
+        center = left + (idx + 0.5) * group_w
+        acc = float(row["accuracy"])
+        f1 = float(row["f1_score"])
+        for metric, value, dx in (
+            ("accuracy", acc, -bar_w * 0.6),
+            ("f1_score", f1, bar_w * 0.1),
+        ):
+            bh = chart_h * value
+            x = center + dx
+            y = top + chart_h - bh
+            lines.append(
+                f"<rect x='{x:.1f}' y='{y:.1f}' width='{bar_w:.1f}' height='{bh:.1f}' fill='{colors[metric]}' />"
+            )
+            lines.append(
+                f"<text x='{x + bar_w / 2:.1f}' y='{y - 7:.1f}' text-anchor='middle' font-size='11' font-family='Arial' fill='#111'>{value:.3f}</text>"
+            )
+        lines.append(
+            f"<text x='{center:.1f}' y='{top + chart_h + 22}' text-anchor='middle' font-size='12' font-family='Arial' fill='#222'>{escape(row['model'])}</text>"
+        )
+
+    lines.append(
+        "<rect x='700' y='70' width='14' height='14' fill='#3949AB' /><text x='722' y='81' font-size='12' font-family='Arial' fill='#222'>Accuracy</text>"
+    )
+    lines.append(
+        "<rect x='700' y='94' width='14' height='14' fill='#F4511E' /><text x='722' y='105' font-size='12' font-family='Arial' fill='#222'>F1 score</text>"
+    )
+    lines.append("</svg>")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def save_confusion_components_chart_svg(
+    path: Path, model_rows: list[dict[str, str]]
+) -> None:
+    """Create grouped bars for TP, FP, FN, and TN counts by model."""
+    width, height = 1120, 660
+    left, right, top, bottom = 110, 40, 90, 130
+    chart_w = width - left - right
+    chart_h = height - top - bottom
+
+    components = ["tp", "fp", "fn", "tn"]
+    labels = {"tp": "TP", "fp": "FP", "fn": "FN", "tn": "TN"}
+    colors = ["#2E7D32", "#C62828", "#EF6C00", "#1565C0"]
+    max_v = max(int(row[c]) for row in model_rows for c in components)
+    max_v = max(max_v, 1)
+
+    n_models = len(model_rows)
+    group_w = chart_w / max(n_models, 1)
+    inner_w = group_w * 0.78
+    bar_w = inner_w / len(components)
+
+    lines = [
+        "<?xml version='1.0' encoding='UTF-8'?>",
+        f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' viewBox='0 0 {width} {height}'>",
+        "<rect width='100%' height='100%' fill='white' />",
+        "<text x='560' y='42' text-anchor='middle' font-size='24' font-family='Arial' fill='#222'>Confusion Components by Model</text>",
+        f"<line x1='{left}' y1='{top + chart_h}' x2='{left + chart_w}' y2='{top + chart_h}' stroke='#444' stroke-width='2' />",
+        f"<line x1='{left}' y1='{top}' x2='{left}' y2='{top + chart_h}' stroke='#444' stroke-width='2' />",
+    ]
+
+    for i in range(6):
+        v = max_v * i / 5
+        y = top + chart_h - chart_h * (i / 5)
+        lines.append(
+            f"<line x1='{left - 6}' y1='{y:.1f}' x2='{left}' y2='{y:.1f}' stroke='#444' stroke-width='1' />"
+        )
+        lines.append(
+            f"<text x='{left - 12}' y='{y + 4:.1f}' text-anchor='end' font-size='12' font-family='Arial' fill='#333'>{int(v)}</text>"
+        )
+        lines.append(
+            f"<line x1='{left}' y1='{y:.1f}' x2='{left + chart_w}' y2='{y:.1f}' stroke='#E6E6E6' stroke-width='1' />"
+        )
+
+    for idx, row in enumerate(model_rows):
+        gx = left + idx * group_w + (group_w - inner_w) / 2
+        for j, comp in enumerate(components):
+            v = int(row[comp])
+            bh = chart_h * (v / max_v)
+            x = gx + j * bar_w
+            y = top + chart_h - bh
+            lines.append(
+                f"<rect x='{x:.1f}' y='{y:.1f}' width='{bar_w - 3:.1f}' height='{bh:.1f}' fill='{colors[j]}' />"
+            )
+            lines.append(
+                f"<text x='{x + (bar_w - 3) / 2:.1f}' y='{y - 6:.1f}' text-anchor='middle' font-size='11' font-family='Arial' fill='#111'>{v}</text>"
+            )
+        lines.append(
+            f"<text x='{left + (idx + 0.5) * group_w:.1f}' y='{top + chart_h + 24}' text-anchor='middle' font-size='12' font-family='Arial' fill='#222'>{escape(row['model'])}</text>"
+        )
+
+    lx, ly = width - 240, 74
+    for j, comp in enumerate(components):
+        yy = ly + j * 24
+        lines.append(
+            f"<rect x='{lx}' y='{yy - 10}' width='14' height='14' fill='{colors[j]}' />"
+        )
+        lines.append(
+            f"<text x='{lx + 22}' y='{yy + 1}' font-size='12' font-family='Arial' fill='#222'>{labels[comp]}</text>"
+        )
+
+    lines.append("</svg>")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def save_confusion_matrix_svg(path: Path, tp: int, tn: int, fp: int, fn: int) -> None:
     """Create a simple 2x2 confusion matrix chart as SVG."""
     w, h = 760, 540
@@ -763,6 +901,10 @@ def run_text_churn_model(rows: list[dict[str, str]], n_folds: int = 5) -> None:
     save_grouped_metric_chart_svg(
         FIGURES_DIR / "model_metric_comparison.svg", comparison_rows
     )
+    save_accuracy_f1_chart_svg(FIGURES_DIR / "model_accuracy_f1.svg", comparison_rows)
+    save_confusion_components_chart_svg(
+        FIGURES_DIR / "model_confusion_components.svg", comparison_rows
+    )
     save_confusion_matrix_svg(
         FIGURES_DIR / "confusion_matrix.svg",
         tp=int(best["tp"]),
@@ -775,6 +917,8 @@ def run_text_churn_model(rows: list[dict[str, str]], n_folds: int = 5) -> None:
     print(f"- {TABLES_DIR / 'model_comparison.csv'}")
     print(f"- {TABLES_DIR / 'model_test_score.csv'}")
     print(f"- {FIGURES_DIR / 'model_metric_comparison.svg'}")
+    print(f"- {FIGURES_DIR / 'model_accuracy_f1.svg'}")
+    print(f"- {FIGURES_DIR / 'model_confusion_components.svg'}")
     print(f"- {FIGURES_DIR / 'confusion_matrix.svg'}")
     print("\nModel comparison summary:")
     for row in comparison_rows:
